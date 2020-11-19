@@ -1551,6 +1551,28 @@ class MisraChecker:
 
             return elements
 
+        def checkInits(dimensions, inits):
+            w = dimensions[-1]
+
+            for i in range(0, len(inits), w):
+                subArr = inits[i : i+w]
+                
+                expl = subArr.count(True)
+                desg = subArr.count('D')
+                
+                if not (desg > 0 and expl == 0 or expl == w or expl + desg == 0 or expl + desg == w):
+                    return False
+
+            return True
+
+        def incArrayPtrWithCarry(ptr, dimensions, level):
+            ptr[level] += 1
+            for l in range(level, 0, -1):
+                if ptr[l] >= dimensions[l]:
+                    ptr[l] = 0
+                    ptr[l - 1] += 1
+
+
         # Checks if the initializer conforms to the dimensions of the array declaration
         # at a given level.
         # Parameters:
@@ -1561,6 +1583,18 @@ class MisraChecker:
             level = 0
             levelOffsets = [] # Calculated when designators in initializers are used
             elements = getRecordElements(valueType) if valueType.type == 'record' else None
+            inits = []
+            r = 1;
+            ptr = []
+
+            # Prepare for 9.3 checking
+            isDesignatedInit = False
+            for d in range(len(dimensions)):
+                r = r * dimensions[d]
+                ptr.append(-1)
+
+            for _ in range(r):
+                inits.append(None)
 
             isFirstElement = False
             while token:
@@ -1576,6 +1610,14 @@ class MisraChecker:
                     token = token.astOperand2
                     isFirstElement = False
 
+                    for i in range(len(designator)):
+                        ptr[level - 1 + i] = designator[i];
+                    
+                    for i in range(level - 1 + len(designator), len(ptr)):
+                        ptr[level -1 + i] = 0;
+
+                    isDesignatedInit = True
+
                 effectiveLevel = sum(levelOffsets) + level
 
                 isStringInitializer = token.isString and effectiveLevel == len(dimensions) - 1
@@ -1584,7 +1626,24 @@ class MisraChecker:
                     if isZeroInitializer or isStringInitializer:
                         # Zero initializer is ok at any level
                         # String initializer is ok at one level below value level
-                        pass
+
+                        start = 0
+                        for p in range(len(dimensions)):
+                            j = ptr[p] if ptr[p] >= 0 else 0
+                            for d in range(p+1, len(dimensions)):
+                                j = j * dimensions[d]
+                            start += j
+
+                        r = 1
+                        adj = 1 if isZeroInitializer else 0
+                        for d in range(level - adj, len(dimensions)):
+                            r = r * dimensions[d]
+
+                        for k in range(r):
+                            inits[start + k] = True
+                        
+                        ptr[level - adj] = dimensions[level - adj] - 1;
+
                     else:
                         isFirstElement = False
                         if valueType.type == 'record':
@@ -1602,16 +1661,34 @@ class MisraChecker:
                     while token:
                         # Done checking once level is back to 0
                         if level == 0:
+                            if not checkInits(dimensions, inits):
+                                self.reportError(token, 9, 3)
+                                return False
                             return True
 
                         if not token.astParent:
                             return True
+
+                        if not token.str == ',' and not token.str == '{' and not token.str == '=':
+                            i = 0
+                            for p in range(len(dimensions)):
+                                j = ptr[p] if ptr[p] >= 0 else 0
+                                for d in range(p+1, len(dimensions)):
+                                    j = j * dimensions[d]
+                                i += j
+
+                            inits[i] = 'D' if isDesignatedInit else True
+                            incArrayPtrWithCarry(ptr, dimensions, len(ptr) - 1)
 
                         if  token.astParent.astOperand1 == token and token.astParent.astOperand2:
                             token = token.astParent.astOperand2
                             break
                         else:
                             token = token.astParent
+
+                            if token.str == '=':
+                                isDesignatedInit = False
+
                             if token.str == '{':
                                 level = level - 1
                                 levelOffsets.pop()
@@ -1624,6 +1701,7 @@ class MisraChecker:
                         return False
 
                     token = token.astOperand1
+                    ptr[level] = 0
                     level = level + 1
                     levelOffsets.append(0)
                     isFirstElement = True
