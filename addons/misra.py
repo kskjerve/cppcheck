@@ -1561,6 +1561,9 @@ class MisraChecker:
         def checkInits(dimensions, inits):
             w = dimensions[-1]
 
+            if w == 0:
+                return True
+
             for i in range(0, len(inits), w):
                 subArr = inits[i : i+w]
                 
@@ -1600,6 +1603,9 @@ class MisraChecker:
                 r = r * dimensions[d]
                 ptr.append(-1)
 
+            if r == 0:
+                r = 1
+
             for _ in range(r):
                 inits.append(None)
 
@@ -1617,7 +1623,7 @@ class MisraChecker:
                     token = token.astOperand2
                     isFirstElement = False
 
-                    for i in range(len(designator)):
+                    for i in range(min(len(designator), len(ptr))):
                         ptr[level - 1 + i] = designator[i];
                     
                     for i in range(level - 1 + len(designator), len(ptr)):
@@ -1633,28 +1639,6 @@ class MisraChecker:
                 isStringInitializer = token.isString and effectiveLevel == len(dimensions) - 1 and valueType.pointer == len(dimensions)
 
                 if effectiveLevel == len(dimensions) or isZeroInitializer or isStringInitializer:
-                    if isZeroInitializer or isStringInitializer:
-                        # Zero initializer is ok at any level
-                        # String initializer is ok at one level below value level
-
-                        start = 0
-                        for p in range(len(dimensions)):
-                            j = ptr[p] if ptr[p] >= 0 else 0
-                            for d in range(p+1, len(dimensions)):
-                                j = j * dimensions[d]
-                            start += j
-
-                        r = 1
-                        adj = 1 if isZeroInitializer else 0
-                        for d in range(level - adj, len(dimensions)):
-                            r = r * dimensions[d]
-
-                        for k in range(r):
-                            inits[start + k] = True
-                        
-                        ptr[level - adj] = dimensions[level - adj] - 1;
-
-                    else:
                     if not isZeroInitializer and not isStringInitializer:
                         isFirstElement = False
                         if valueType.type == 'record':
@@ -1673,19 +1657,31 @@ class MisraChecker:
                         elif token.isString and valueType.pointer == len(dimensions):
                             self.reportError(token, 9, 2)
                             return False
+                    else:
+                        start = 0
+                        for p in range(len(dimensions)):
+                            j = ptr[p] if ptr[p] >= 0 else 0
+                            for d in range(p+1, len(dimensions)):
+                                j = j * dimensions[d]
+                            start += j
+
+                        r = 1
+                        adj = 1 if isZeroInitializer else 0
+                        for d in range(level - adj, len(dimensions)):
+                            r = r * dimensions[d]
+
+                        for k in range(r):
+                            inits[start + k] = True
+                        
+                        ptr[level - adj] = dimensions[level - adj] - 1;
 
                     # Done evaluating leaf node - go back up to find next astOperand2
                     while token:
-                        # Done checking once level is back to 0
-                        if level == 0:
+                        # Done checking once level is back to 0 (or we run out of parents)
+                        if level == 0 or not token.astParent:
                             if not checkInits(dimensions, inits):
                                 self.reportError(token, 9, 3)
                                 return False
-                            return True
-
-                        if not token.astParent:
-                        # Done checking once level is back to 0 (or we run out of parents)
-                        if level == 0 or not token.astParent:
                             return True
 
                         if not token.str == ',' and not token.str == '{' and not token.str == '=':
@@ -1807,6 +1803,8 @@ class MisraChecker:
                 continue
 
             nameToken = variable.nameToken
+
+            print(nameToken.str)
 
             # Check if declaration and initialization is
             # split into two separate statements in ast.
